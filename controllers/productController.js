@@ -1,5 +1,5 @@
 // controllers/productController.js
-const Product = require('../models/product');
+const Product = require('../models/Product');
 const bwipjs = require('bwip-js');
 
 // helper SKU generator
