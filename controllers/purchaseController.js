@@ -42,10 +42,11 @@ exports.createPurchase = async (req, res, next) => {
     // ✅ Update stock for each purchased product
     for (const item of items) {
       await Product.findByIdAndUpdate(
-        item.product,
-        { $inc: { stock: item.quantity } }, // increase stock
-        { new: true, session }
-      );
+  item.product,
+  { $inc: { stockQuantity: item.quantity } }, // ✅ correct field
+  { new: true, session }
+);
+
     }
 
     await session.commitTransaction();
@@ -119,11 +120,12 @@ exports.deletePurchase = async (req, res, next) => {
 
     // ✅ Decrease stock for each purchased item
     for (const item of purchase.items) {
-      await Product.findByIdAndUpdate(
-        item.product,
-        { $inc: { stock: -item.quantity } }, // rollback
-        { new: true, session }
-      );
+    await Product.findByIdAndUpdate(
+  item.product,
+  { $inc: { stockQuantity: -item.quantity } }, // ✅ correct field
+  { new: true, session }
+);
+
     }
 
     await purchase.deleteOne({ session });
