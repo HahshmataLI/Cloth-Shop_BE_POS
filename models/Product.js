@@ -29,13 +29,14 @@ const ProductSchema = new mongoose.Schema(
 
     supplier: { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier' },
 
-    images: [
-      {
-        data: Buffer,
-        contentType: String,
-        filename: String,
-      },
-    ],
+   images: [
+  {
+    url: String,         // where image is stored (e.g. /uploads/abc.png)
+    filename: String,    // original or unique name
+    contentType: String, // image/jpeg etc
+  },
+],
+
 
     barcodeImage: { type: String },
     description: { type: String },

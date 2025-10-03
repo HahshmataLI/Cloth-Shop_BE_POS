@@ -20,7 +20,7 @@ const logger = require('./config/logger');
 
 const app = express();
 
-
+const path = require('path');
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '5mb' })); // adjust limit for image buffers
@@ -42,7 +42,7 @@ app.use('/api/v1/purchases', purchaseRoutes);
 app.use('/api/v1/category', categoryRoutes);
 app.use('/api/v1/subcategories', subCategoryRoutes);
 app.use('/api/v1/suppliers', supplierRoutes);
-
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // health check
 app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
