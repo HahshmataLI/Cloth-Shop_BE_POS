@@ -1,6 +1,8 @@
 // controllers/productController.js
 const Product = require("../models/Product");
 const bwipjs = require("bwip-js");
+const fs = require("fs");
+const path = require("path");
 
 // helper SKU generator
 function generateSKU(prefix = "RS") {
@@ -10,36 +12,35 @@ function generateSKU(prefix = "RS") {
     .toUpperCase()}`;
 }
 
-// CREATE product (handles req.files from multer memoryStorage)
+// helper: remove duplicate images (by filename)
+function uniqueImages(images) {
+  return Array.from(new Map(images.map(img => [img.filename, img])).values());
+}
+
 // CREATE product
 async function createProduct(req, res) {
   try {
     const body = req.body || {};
-
-    // ensure category provided
     if (!body.category) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Category is required" });
+      return res.status(400).json({ success: false, message: "Category required" });
     }
 
-    // generate or validate SKU
     const sku = body.sku || generateSKU("RS");
     const exist = await Product.findOne({ sku });
     if (exist) {
-      return res
-        .status(400)
-        .json({ success: false, message: "SKU already exists." });
+      return res.status(400).json({ success: false, message: "SKU already exists." });
     }
 
-    // prepare images array
-    const images = (req.files || []).map((f) => ({
-      url: `/uploads/${f.filename}`, // public static path
-      filename: f.originalname,
-      contentType: f.mimetype,
-    }));
+    // Save relative paths for images
+    const images = uniqueImages(
+      (req.files || []).map(f => ({
+        url: `/uploads/${f.filename}`,   // relative path only
+        filename: f.originalname,
+        contentType: f.mimetype,
+      }))
+    );
 
-    // generate barcode once
+    // generate barcode (base64 image)
     const png = await bwipjs.toBuffer({
       bcid: "code128",
       text: sku,
@@ -50,14 +51,7 @@ async function createProduct(req, res) {
     });
     const barcodeBase64 = `data:image/png;base64,${png.toString("base64")}`;
 
-    // build product
-    const product = new Product({
-      ...body,
-      sku,
-      images,
-      barcodeImage: barcodeBase64,
-    });
-
+    const product = new Product({ ...body, sku, images, barcodeImage: barcodeBase64 });
     await product.save();
 
     res.status(201).json({ success: true, data: product });
@@ -67,7 +61,7 @@ async function createProduct(req, res) {
   }
 }
 
-// GET all products (with search + pagination) - Optimized
+// GET all products (with pagination + search)
 async function getProducts(req, res) {
   try {
     const { q, page = 1, limit = 50 } = req.query;
@@ -80,29 +74,23 @@ async function getProducts(req, res) {
       ];
     }
 
-    // Convert page/limit to numbers once
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 50;
 
-    // Run queries in parallel
     const [products, total] = await Promise.all([
       Product.find(filter)
         .populate("category", "name")
         .populate("subcategory", "name")
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)
-        .lean(), // ⚡ Faster plain objects instead of Mongoose docs
+        .lean(),
       Product.countDocuments(filter),
     ]);
 
     res.json({
       success: true,
       data: products,
-      meta: {
-        total,
-        page: pageNum,
-        limit: limitNum,
-      },
+      meta: { total, page: pageNum, limit: limitNum },
     });
   } catch (err) {
     console.error("getProducts err:", err);
@@ -116,12 +104,10 @@ async function getProductById(req, res) {
     const p = await Product.findById(req.params.id)
       .populate("category", "name")
       .populate("subcategory", "name")
-      .lean(); // ⚡ faster, plain JSON instead of Mongoose doc
+      .lean();
 
     if (!p) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Product not found" });
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
 
     res.json({ success: true, data: p });
@@ -131,29 +117,18 @@ async function getProductById(req, res) {
   }
 }
 
-// GET product by Barcode/SKU
+// GET product by SKU (since barcode field doesn't exist in schema)
 async function getByBarcode(req, res) {
   try {
-    const barcode = req.params.barcode;
+    const code = req.params.barcode;
 
-    // Run queries in parallel → whichever matches first, we pick
-    const [bySku, byBarcode] = await Promise.all([
-      Product.findOne({ sku: barcode })
-        .populate("category", "name")
-        .populate("subcategory", "name")
-        .lean(),
-      Product.findOne({ barcode })
-        .populate("category", "name")
-        .populate("subcategory", "name")
-        .lean(),
-    ]);
-
-    const p = bySku || byBarcode;
+    const p = await Product.findOne({ sku: code })
+      .populate("category", "name")
+      .populate("subcategory", "name")
+      .lean();
 
     if (!p) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Product not found" });
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
 
     res.json({ success: true, data: p });
@@ -162,19 +137,21 @@ async function getByBarcode(req, res) {
     res.status(500).json({ success: false, message: err.message });
   }
 }
+
 // UPDATE product
 async function updateProduct(req, res) {
   try {
     const body = req.body || {};
     const updateData = { ...body };
 
-    // if new files uploaded → add them
     if (req.files && req.files.length) {
-      updateData.images = req.files.map((f) => ({
-        url: `/uploads/${f.filename}`,
-        filename: f.originalname,
-        contentType: f.mimetype,
-      }));
+      updateData.images = uniqueImages(
+        req.files.map(f => ({
+          url: `/uploads/${f.filename}`,
+          filename: f.originalname,
+          contentType: f.mimetype,
+        }))
+      );
     }
 
     const updated = await Product.findByIdAndUpdate(req.params.id, updateData, {
@@ -186,7 +163,7 @@ async function updateProduct(req, res) {
       .lean();
 
     if (!updated) {
-      return res.status(404).json({ success: false, message: "Not found" });
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
 
     res.json({ success: true, data: updated });
@@ -196,14 +173,23 @@ async function updateProduct(req, res) {
   }
 }
 
-// DELETE product
+// DELETE product (with image cleanup)
 async function deleteProduct(req, res) {
   try {
-    const d = await Product.findByIdAndDelete(req.params.id);
-    if (!d) {
-      return res.status(404).json({ success: false, message: "Not found" });
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
-    res.json({ success: true, message: "Deleted" });
+
+    // cleanup uploaded images
+    product.images.forEach(img => {
+      const filePath = path.join(__dirname, "../uploads", path.basename(img.url));
+      fs.unlink(filePath, err => {
+        if (err) console.error("File delete error:", err.message);
+      });
+    });
+
+    res.json({ success: true, message: "Product deleted successfully" });
   } catch (err) {
     console.error("deleteProduct err:", err);
     res.status(500).json({ success: false, message: err.message });
