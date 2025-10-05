@@ -16,7 +16,7 @@ const purchaseRoutes = require('./routes/purchaseRoutes');
 const authRoutes = require('./routes/authRoutes');
 const errorHandler = require('./middlewares/errorHandler');
 const logger = require('./config/logger');
-
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 const app = express();
 
@@ -43,6 +43,7 @@ app.use('/api/v1/category', categoryRoutes);
 app.use('/api/v1/subcategories', subCategoryRoutes);
 app.use('/api/v1/suppliers', supplierRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/v1/dashboard', dashboardRoutes);
 // health check
 app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
