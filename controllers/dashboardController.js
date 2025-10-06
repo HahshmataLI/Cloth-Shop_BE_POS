@@ -13,12 +13,10 @@ function startOfDay(d = new Date()) {
 }
 
 function startOfMonth(d = new Date()) {
-  const x = new Date(d.getFullYear(), d.getMonth(), 1);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  return new Date(d.getFullYear(), d.getMonth(), 1);
 }
 
-// GET /api/v1/dashboard/summary
+// controllers/dashboardController.js
 exports.getSummary = async (req, res) => {
   try {
     const today = startOfDay();
@@ -30,37 +28,156 @@ exports.getSummary = async (req, res) => {
       totalProductsCount,
       totalCustomersCount,
       totalSuppliersCount,
+
+      // total sales revenue
       totalRevenueAgg,
+
+      // today's sales
       todaySalesAgg,
+
+      // this month sales
       monthSalesAgg,
-      lowStockProductsArr
+
+      // low stock
+      lowStockProductsArr,
+
+      // ---- PROFIT CALCULATIONS ----
+      profitAgg,
+      todayProfitAgg,
+      monthProfitAgg
     ] = await Promise.all([
       Sale.countDocuments(),
       Purchase.countDocuments(),
       Product.countDocuments(),
       Customer.countDocuments(),
       Supplier.countDocuments(),
+
+      // total sales revenue
       Sale.aggregate([
-        { $group: { _id: null, totalRevenue: { $sum: '$grandTotal' } } }
+        { $group: { _id: null, totalRevenue: { $sum: "$grandTotal" } } }
       ]),
-      // Today's sales
+
+      // today's sales
       Sale.aggregate([
         { $match: { date: { $gte: today } } },
-        { $group: { _id: null, total: { $sum: '$grandTotal' }, invoices: { $sum: 1 } } }
+        { $group: { _id: null, total: { $sum: "$grandTotal" }, invoices: { $sum: 1 } } }
       ]),
-      // Month sales
+
+      // this month sales
       Sale.aggregate([
         { $match: { date: { $gte: monthStart } } },
-        { $group: { _id: null, total: { $sum: '$grandTotal' }, invoices: { $sum: 1 } } }
+        { $group: { _id: null, total: { $sum: "$grandTotal" }, invoices: { $sum: 1 } } }
       ]),
-      Product.find({ stockQuantity: { $lte: 5, $gt: 0 } }).select('_id').lean()
+
+      // low stock products
+      Product.find({ stockQuantity: { $lte: 5, $gt: 0 } }).select("_id").lean(),
+
+      // total profit
+      Sale.aggregate([
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "items.product",
+            foreignField: "_id",
+            as: "prod"
+          }
+        },
+        { $unwind: "$prod" },
+        {
+          $project: {
+            revenue: { 
+              $multiply: [
+                "$items.quantity", 
+                { $subtract: ["$items.unitPrice", "$items.discount"] } // ✅ discount-aware
+              ] 
+            },
+            cost: { $multiply: ["$items.quantity", "$prod.purchasePrice"] }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalProfit: { $sum: { $subtract: ["$revenue", "$cost"] } }
+          }
+        }
+      ]),
+
+      // today's profit
+      Sale.aggregate([
+        { $match: { date: { $gte: today } } },
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "items.product",
+            foreignField: "_id",
+            as: "prod"
+          }
+        },
+        { $unwind: "$prod" },
+        {
+          $project: {
+            revenue: { 
+              $multiply: [
+                "$items.quantity", 
+                { $subtract: ["$items.unitPrice", "$items.discount"] }
+              ] 
+            },
+            cost: { $multiply: ["$items.quantity", "$prod.purchasePrice"] }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            todayProfit: { $sum: { $subtract: ["$revenue", "$cost"] } }
+          }
+        }
+      ]),
+
+      // this month profit
+      Sale.aggregate([
+        { $match: { date: { $gte: monthStart } } },
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "items.product",
+            foreignField: "_id",
+            as: "prod"
+          }
+        },
+        { $unwind: "$prod" },
+        {
+          $project: {
+            revenue: { 
+              $multiply: [
+                "$items.quantity", 
+                { $subtract: ["$items.unitPrice", "$items.discount"] }
+              ] 
+            },
+            cost: { $multiply: ["$items.quantity", "$prod.purchasePrice"] }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            monthProfit: { $sum: { $subtract: ["$revenue", "$cost"] } }
+          }
+        }
+      ])
     ]);
 
-    const totalRevenue = totalRevenueAgg.length ? totalRevenueAgg[0].totalRevenue : 0;
-    const todaySales = todaySalesAgg.length ? todaySalesAgg[0].total : 0;
-    const todayInvoices = todaySalesAgg.length ? todaySalesAgg[0].invoices : 0;
-    const monthSales = monthSalesAgg.length ? monthSalesAgg[0].total : 0;
-    const monthInvoices = monthSalesAgg.length ? monthSalesAgg[0].invoices : 0;
+    // ✅ Extract values safely
+    const totalRevenue = totalRevenueAgg[0]?.totalRevenue || 0;
+    const todaySales = todaySalesAgg[0]?.total || 0;
+    const todayInvoices = todaySalesAgg[0]?.invoices || 0;
+    const monthSales = monthSalesAgg[0]?.total || 0;
+    const monthInvoices = monthSalesAgg[0]?.invoices || 0;
+
+    const totalProfit = profitAgg[0]?.totalProfit || 0;
+    const todayProfit = todayProfitAgg[0]?.todayProfit || 0;
+    const monthProfit = monthProfitAgg[0]?.monthProfit || 0;
 
     res.json({
       success: true,
@@ -70,19 +187,27 @@ exports.getSummary = async (req, res) => {
         totalProducts: totalProductsCount,
         totalCustomers: totalCustomersCount,
         totalSuppliers: totalSuppliersCount,
+
         totalRevenue,
+        totalProfit,
+
         todaySales,
         todayInvoices,
+        todayProfit,
+
         monthSales,
         monthInvoices,
+        monthProfit,
+
         lowStockProducts: lowStockProductsArr.length
       }
     });
   } catch (err) {
-    console.error('getSummary error:', err);
+    console.error("getSummary error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
 
 // GET /api/v1/dashboard/top-products?limit=5
 exports.getTopProducts = async (req, res) => {
